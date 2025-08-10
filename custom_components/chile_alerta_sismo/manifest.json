@@ -1,12 +1,10 @@
 {
   "domain": "chile_alerta_sismo",
   "name": "Chile Alerta Sismo",
-  "version": "1.0.0",
-  "documentation": "https://github.com/TBMSP/Chile-Alerta-API",
-  "requirements": [
-    "staticmap==0.5.7"
-  ],
-  "codeowners": ["Duvob90"],
+  "version": "1.1.0",
+  "documentation": "https://api.gael.cloud/general/public/sismos",
+  "requirements": ["staticmap==0.5.7"],
+  "codeowners": ["@Duvob90"],
   "config_flow": true,
   "iot_class": "cloud_polling"
 }
