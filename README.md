@@ -1,4 +1,4 @@
-hile Alerta Sismo – Integración para Home Assistant
+Chile Alerta Sismo – Integración para Home Assistant
 Esta integración personalizada permite mostrar en Home Assistant información en tiempo real de los últimos sismos reportados por el Centro Sismológico Nacional (CSN) de Chile, usando los datos de la API de ShakeMaps.
 A diferencia de la API de GAEL, esta entrega latitud y longitud, lo que permite mostrar el evento en un mapa.
 
