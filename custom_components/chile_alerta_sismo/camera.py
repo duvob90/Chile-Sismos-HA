@@ -41,6 +41,38 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
         self._last_event_id: Optional[str] = None
         self._last_size: tuple[int, int] | None = None
 
+        # Diagnóstico
+        self._last_url: str | None = None
+        self._last_status: int | None = None
+        self._last_error: str | None = None
+
+    @property
+    def extra_state_attributes(self):
+        """Expose last fetch info for troubleshooting."""
+        return {
+            "last_url": self._last_url,
+            "last_http_status": self._last_status,
+            "last_error": self._last_error,
+        }
+
+    async def _fetch(self, url: str) -> bytes | None:
+        """GET helper with diagnostics."""
+        session = async_get_clientsession(self.hass)
+        self._last_url = url
+        self._last_status = None
+        self._last_error = None
+        try:
+            async with session.get(url, timeout=20) as resp:
+                self._last_status = resp.status
+                if resp.status != 200:
+                    _LOGGER.warning("OSM static map HTTP %s for %s", resp.status, url)
+                    return None
+                return await resp.read()
+        except Exception as err:
+            self._last_error = str(err)
+            _LOGGER.error("Failed to fetch static map: %s", err)
+            return None
+
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
@@ -58,7 +90,7 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
         if lat is None or lon is None:
             return None
 
-        # Size defaults; HA escala en la tarjeta igual
+        # Size defaults; HA escala igualmente en la card
         w = 600 if width is None else max(256, min(2000, width))
         h = 360 if height is None else max(200, min(2000, height))
 
@@ -70,26 +102,29 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
         ):
             return self._last_image
 
-        # OSM Static Map API
-        # Docs/ejemplos: https://staticmap.openstreetmap.de/
-        # markers admite estilos como "red-pushpin"
+        # 1) Intento: servidor principal
         base = "https://staticmap.openstreetmap.de/staticmap.php"
-        url = (
+        url1 = (
             f"{base}?center={lat},{lon}"
             f"&zoom=6"
             f"&size={w}x{h}"
             f"&markers={lat},{lon},red-pushpin"
         )
+        img = await self._fetch(url1)
 
-        session = async_get_clientsession(self.hass)
-        try:
-            async with session.get(url, timeout=20) as resp:
-                if resp.status != 200:
-                    _LOGGER.warning("OSM static map HTTP %s", resp.status)
-                    return None
-                img = await resp.read()
-        except Exception as err:  # pragma: no cover
-            _LOGGER.error("Failed to fetch OSM static map: %s", err)
+        # 2) Fallback: espejo HOT (mismo estilo, a veces más disponible)
+        if img is None:
+            base2 = "https://a.tile.openstreetmap.fr/hot/staticmap.php"
+            url2 = (
+                f"{base2}?center={lat},{lon}"
+                f"&zoom=6"
+                f"&size={w}x{h}"
+                f"&markers={lat},{lon},red-pushpin"
+            )
+            img = await self._fetch(url2)
+
+        if img is None:
+            # Nada que mostrar
             return None
 
         self._last_image = img
