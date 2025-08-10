@@ -1,7 +1,14 @@
 {
+{
   "name": "Chile Alerta Sismo",
   "render_readme": true,
-  "domains": ["sensor", "camera"],
-  "homeassistant": "2024.4.1",
+  "filename": "chile_alerta_sismo.zip",
+  "domains": ["sensor"],
+  "homeassistant": "2024.1.0",
+  "country": ["CL"],
+  "iot_class": "cloud_polling",
+  "persistent_directory": "custom_components/chile_alerta_sismo",
+  "hide_default_branch": false,
+  "zip_release": false
   "codeowners": ["@duvob90"]
 }
