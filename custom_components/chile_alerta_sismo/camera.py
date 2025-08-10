@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import io
 import logging
 from typing import Optional
 
 from homeassistant.components.camera import Camera
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, DEFAULT_NAME
@@ -24,7 +24,7 @@ async def async_setup_entry(
 
 
 class ChileSismoMapCamera(CoordinatorEntity, Camera):
-    """Camera entity showing a static map with the latest earthquake epicenter."""
+    """Camera entity that fetches a static map image from OpenStreetMap."""
 
     def __init__(self, coordinator: ChileAlertaCoordinator, entry: ConfigEntry) -> None:
         CoordinatorEntity.__init__(self, coordinator)
@@ -34,17 +34,19 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": DEFAULT_NAME,
-            "manufacturer": "GAEL",
-            "model": "Último Sismo",
+            "manufacturer": "OpenStreetMap",
+            "model": "StaticMap",
         }
         self._last_image: Optional[bytes] = None
         self._last_event_id: Optional[str] = None
+        self._last_size: tuple[int, int] | None = None
 
-    async def async_camera_image(self, width: int | None = None, height: int | None = None) -> bytes | None:
-        """Return bytes of camera image.
+    async def async_camera_image(
+        self, width: int | None = None, height: int | None = None
+    ) -> bytes | None:
+        """Return bytes of camera image fetched from OSM Static Map.
 
-        Always attempts to render a map image if we have lat/lon.
-        Caches the last image per event to avoid re-rendering.
+        Caches per (event_id, size) to avoid refetching.
         """
         data = self.coordinator.data
         if not data:
@@ -53,48 +55,44 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
         lat = data.get("latitude")
         lon = data.get("longitude")
         event_id = data.get("id")
-
         if lat is None or lon is None:
-            # No coordinates yet
             return None
 
-        # Return cached image if same event
-        if self._last_image is not None and event_id == self._last_event_id:
+        # Size defaults; HA escala en la tarjeta igual
+        w = 600 if width is None else max(256, min(2000, width))
+        h = 360 if height is None else max(200, min(2000, height))
+
+        # Cache
+        if (
+            self._last_image is not None
+            and event_id == self._last_event_id
+            and self._last_size == (w, h)
+        ):
             return self._last_image
 
+        # OSM Static Map API
+        # Docs/ejemplos: https://staticmap.openstreetmap.de/
+        # markers admite estilos como "red-pushpin"
+        base = "https://staticmap.openstreetmap.de/staticmap.php"
+        url = (
+            f"{base}?center={lat},{lon}"
+            f"&zoom=6"
+            f"&size={w}x{h}"
+            f"&markers={lat},{lon},red-pushpin"
+        )
+
+        session = async_get_clientsession(self.hass)
         try:
-            # Generate static map using HTTPS tiles (avoid mixed-content issues)
-            from staticmap import StaticMap, CircleMarker
-
-            # Default size; HA will scale on the card
-            width_px = 600 if width is None else max(256, min(2000, width))
-            height_px = 360 if height is None else max(200, min(2000, height))
-
-            m = StaticMap(
-                width_px,
-                height_px,
-                url_template="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-            )
-
-            # Marker with white outline for contrast
-            marker_outline = CircleMarker((float(lon), float(lat)), "white", 12)
-            marker = CircleMarker((float(lon), float(lat)), "#d32f2f", 8)
-            m.add_marker(marker_outline)
-            m.add_marker(marker)
-
-            # A fixed zoom works well across Chile; adjust if you prefer
-            image = m.render(zoom=6)
-
-            buf = io.BytesIO()
-            image.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
-
-            # Cache
-            self._last_image = img_bytes
-            self._last_event_id = event_id
-
-            return img_bytes
-
+            async with session.get(url, timeout=20) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning("OSM static map HTTP %s", resp.status)
+                    return None
+                img = await resp.read()
         except Exception as err:  # pragma: no cover
-            _LOGGER.error("Failed to generate GAEL epicenter map: %s", err)
+            _LOGGER.error("Failed to fetch OSM static map: %s", err)
             return None
+
+        self._last_image = img
+        self._last_event_id = event_id
+        self._last_size = (w, h)
+        return img
