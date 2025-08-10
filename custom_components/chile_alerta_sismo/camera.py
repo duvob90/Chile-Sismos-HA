@@ -16,7 +16,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities) -> None:
-    """Set up the epicenter map camera from a config entry."""
     coordinator: ChileAlertaCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([ChileSismoMapCamera(coordinator, entry)])
 
@@ -35,20 +34,15 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
             "manufacturer": "OpenStreetMap",
             "model": "Static Map",
         }
-
-        # cache
         self._last_image: Optional[bytes] = None
         self._last_event_id: Optional[str] = None
         self._last_size: Optional[Tuple[int, int]] = None
-
-        # diagnostics
         self._last_url: Optional[str] = None
         self._last_http_status: Optional[int] = None
         self._last_error: Optional[str] = None
 
     @property
     def extra_state_attributes(self):
-        """Expose fetch diagnostics in Dev Tools."""
         return {
             "last_url": self._last_url,
             "last_http_status": self._last_http_status,
@@ -56,15 +50,11 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
         }
 
     async def _fetch(self, url: str) -> Optional[bytes]:
-        """HTTP GET with diagnostics and a friendly User-Agent."""
+        session = async_get_clientsession(self.hass)
+        headers = {"User-Agent": "HomeAssistant-ChileSismos/1.0 (+github.com/duvob90/Chile-Sismos-HA)"}
         self._last_url = url
         self._last_http_status = None
         self._last_error = None
-
-        session = async_get_clientsession(self.hass)
-        headers = {
-            "User-Agent": "HomeAssistant-ChileSismos/1.0 (+https://github.com/duvob90/Chile-Sismos-HA)"
-        }
         try:
             async with session.get(url, headers=headers, timeout=20) as resp:
                 self._last_http_status = resp.status
@@ -72,47 +62,38 @@ class ChileSismoMapCamera(CoordinatorEntity, Camera):
                     _LOGGER.warning("Static map HTTP %s for %s", resp.status, url)
                     return None
                 return await resp.read()
-        except Exception as err:  # pragma: no cover
+        except Exception as err:
             self._last_error = str(err)
             _LOGGER.error("Static map fetch failed: %s", err)
             return None
 
     async def async_camera_image(self, width: int | None = None, height: int | None = None) -> bytes | None:
-        """Return bytes for the camera image. Always tries to show a map if we have lat/lon."""
-        data = self.coordinator.data
-        if not data:
-            return None
-
+        data = self.coordinator.data or {}
         lat = data.get("latitude")
         lon = data.get("longitude")
         event_id = data.get("id")
         if lat is None or lon is None:
             return None
 
-        # size (HA escala en la tarjeta, pero pedimos algo razonable)
         w = 640 if width is None else max(256, min(2000, width))
         h = 360 if height is None else max(200, min(2000, height))
 
-        # cache
         if self._last_image is not None and event_id == self._last_event_id and self._last_size == (w, h):
             return self._last_image
 
-        # 1) servidor principal
         base1 = "https://staticmap.openstreetmap.de/staticmap.php"
         url1 = f"{base1}?center={lat},{lon}&zoom=6&size={w}x{h}&markers={lat},{lon},red-pushpin"
         img = await self._fetch(url1)
-
-        # 2) espejo HOT (fallback)
         if img is None:
             base2 = "https://a.tile.openstreetmap.fr/hot/staticmap.php"
             url2 = f"{base2}?center={lat},{lon}&zoom=6&size={w}x{h}&markers={lat},{lon},red-pushpin"
             img = await self._fetch(url2)
 
         if img is None:
-            # No image available; keep returning None so the UI shows placeholder
             return None
 
         self._last_image = img
         self._last_event_id = event_id
         self._last_size = (w, h)
         return img
+
