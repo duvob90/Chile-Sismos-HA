@@ -1,0 +1,7 @@
+{
+  "name": "Chile Alerta Sismo",
+  "render_readme": true,
+  "domains": ["sensor", "camera"],
+  "homeassistant": "2024.4.1",
+  "codeowners": ["@duvob90"]
+}
